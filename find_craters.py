@@ -26,7 +26,7 @@ from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction
 
 # Import OpenCV
-import opencv-python as cv2
+import cv2
 
 # Initialize Qt resources from file resources.py
 from .resources import *
