@@ -25,6 +25,9 @@ from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction
 
+# Import OpenCV
+import opencv-python as cv2
+
 # Initialize Qt resources from file resources.py
 from .resources import *
 # Import the code for the dialog
@@ -182,19 +185,92 @@ class FindCraters:
 
     def run(self):
         """Run method that performs all the real work"""
+        # Get the active layer
+        layer = self.iface.activeLayer()
 
-        # Create the dialog with elements (after translation) and keep reference
-        # Only create GUI ONCE in callback, so that it will only load when the plugin is started
-        if self.first_start == True:
-            self.first_start = False
-            self.dlg = FindCratersDialog()
+        if not layer:
+            # Display an error message if no layer is selected
+            self.iface.messageBar().pushMessage("Error", "No layer selected", level=3)
+            return
 
-        # show the dialog
-        self.dlg.show()
-        # Run the dialog event loop
-        result = self.dlg.exec_()
-        # See if OK was pressed
-        if result:
-            # Do something useful here - delete the line containing pass and
-            # substitute with your code.
-            pass
+        # Check if the active layer is a raster layer
+        if layer.type() == QgsMapLayer.RasterLayer:
+            raster = layer.dataProvider()
+            width = raster.xSize()
+            height = raster.ySize()
+
+            # Get raster data as a block
+            block = layer.dataProvider().block(1, layer.extent(), width, height)
+
+            # Convert raster data to an OpenCV-compatible format
+            array = block_to_numpy(block)
+            image = cv2.cvtColor(array, cv2.COLOR_GRAY2BGR)
+
+            # Detect craters (circles) in the image
+            craters = detect_craters(array)
+
+            # Highlight detected craters on the image
+            if craters is not None:
+                craters = np.uint16(np.around(craters))
+                for crater in craters[0, :]:
+                    # Draw the outer circle
+                    cv2.circle(image, (crater[0], crater[1]), crater[2], (0, 255, 0), 2)
+                    # Draw the circle center
+                    cv2.circle(image, (crater[0], crater[1]), 2, (0, 0, 255), 3)
+
+            # Display the resulting image with highlighted craters
+            cv2.imshow('Detected Craters', image)
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
+        else:
+            # Display an error message if the layer is not a raster layer
+            self.iface.messageBar().pushMessage("Error", "Selected layer is not a raster layer", level=3)
+
+
+    def block_to_numpy(block):
+        """
+        Convert a QgsRasterBlock to a NumPy array.
+        
+        Parameters:
+            block (QgsRasterBlock): Raster block containing pixel data.
+
+        Returns:
+            np.ndarray: NumPy array representation of the raster block.
+        """
+        import numpy as np
+        cols = block.width()
+        rows = block.height()
+        array = np.zeros((rows, cols), dtype=np.uint8)
+
+        for i in range(rows):
+            for j in range(cols):
+                array[i, j] = block.value(i, j)
+        return array
+
+
+    def detect_craters(gray_image):
+        """
+        Detect craters in a grayscale image using the Hough Circle Transform.
+
+        Parameters:
+            gray_image (np.ndarray): Grayscale image containing potential craters.
+
+        Returns:
+            circles (np.ndarray): Array of detected circles, where each circle is 
+                                represented as (x_center, y_center, radius).
+        """
+        # Apply a median blur to reduce noise
+        blurred = cv2.medianBlur(gray_image, 5)
+
+        # Detect circles using the Hough Circle Transform
+        circles = cv2.HoughCircles(
+            blurred,
+            cv2.HOUGH_GRADIENT,
+            dp=1.2,          # Inverse ratio of the accumulator resolution to the image resolution
+            minDist=20,      # Minimum distance between circle centers
+            param1=50,       # Upper threshold for the Canny edge detector
+            param2=30,       # Accumulator threshold for circle detection
+            minRadius=10,    # Minimum radius of detected circles
+            maxRadius=100    # Maximum radius of detected circles
+        )
+        return circles
